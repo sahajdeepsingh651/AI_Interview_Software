@@ -1,5 +1,5 @@
 from flask import Flask, render_template, request,session ,redirect
-from gensim.models import KeyedVectors
+from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 
@@ -7,7 +7,7 @@ app = Flask(__name__)
 app.secret_key = 'your_secret_key_here'
 # Load Word2Vec model
 print("Loading Word2Vec model...")
-w2v = KeyedVectors.load_word2vec_format("word2vec_model.bin", binary=True)
+model = SentenceTransformer('all-MiniLM-L6-v2')
 print("Model loaded.")
 
 
@@ -51,12 +51,10 @@ answers = {
 }
 
 def get_avg_vector(text):
-    words = [word for word in text.split() if word in w2v]
-    if not words:
-        return np.zeros((300,))
-    return np.mean([w2v[word] for word in words], axis=0)
+    # Generate embeddings for the text (user answer and model answer)
+    embedding = model.encode(text)
+    return np.array(embedding)
 
-@app.route("/", methods=["GET", "POST"])
 @app.route("/", methods=["GET", "POST"])
 def index():
     if request.method == "GET":
