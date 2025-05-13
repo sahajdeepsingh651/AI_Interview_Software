@@ -4,3 +4,4 @@ __pycache__/
 venv/
 .env
 /static/uploads/
+/instance/site.db
