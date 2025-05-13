@@ -1,7 +1,19 @@
-from flask import Flask, render_template, request,session ,redirect
+from flask import Flask, render_template, request,session ,redirect,jsonify,flash,url_for
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
+import base64
+from random import random
+from models import db, User, Video
+from flask_login import LoginManager, login_user, logout_user, login_required, current_user
+from werkzeug.security import generate_password_hash, check_password_hash
+import os
+from datetime import datetime  # Ensure you import datetime here
+import moviepy.editor as mp
+import speech_recognition as sr
+from moviepy.editor import VideoFileClip
+import subprocess
+
 
 app = Flask(__name__)
 app.secret_key = 'your_secret_key_here'
@@ -9,6 +21,17 @@ app.secret_key = 'your_secret_key_here'
 print("Loading Word2Vec model...")
 model = SentenceTransformer('all-MiniLM-L6-v2')
 print("Model loaded.")
+
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///site.db'
+db.init_app(app)
+
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = 'login'
+
+with app.app_context():
+    db.create_all()
+
 
 
 answers = {
@@ -49,37 +72,87 @@ answers = {
     "Who has inspired you in your life?": "My father has been a big inspiration. His discipline, perseverance, and attitude toward problem-solving have taught me how to stay focused and overcome obstacles without giving up."
     
 }
-
+# Function to get the average vector of a text (for cosine similarity)
 def get_avg_vector(text):
-    # Generate embeddings for the text (user answer and model answer)
     embedding = model.encode(text)
     return np.array(embedding)
 
-@app.route("/", methods=["GET", "POST"])
-def index():
-    if request.method == "GET":
-        session["score_history"] = {}
-        session.modified = True
+@app.before_request
+def before_request():
+    print(f"Before Request Triggered. Endpoint: {request.endpoint}, Authenticated: {current_user.is_authenticated}")
+    
+    if current_user.is_authenticated:
+        print("User is authenticated. Current Endpoint:", request.endpoint)
 
+        # Exempt static files, API calls, and favicon
+        if request.path.startswith('/static') or request.path.startswith('/api') or request.path == '/favicon.ico':
+            return  # Do nothing, continue normally
+
+        # Exclude form submissions (POST requests)
+        if request.method == 'POST':
+            print("POST request detected. Not logging out.")
+            return  # Skip logout on POST requests
+        
+        # Only detect refresh on GET requests (not video recording)
+        if request.method == 'GET':
+            if request.endpoint is None:
+                print("Request with None endpoint. Ignoring.")
+                return
+
+            if 'last_page' not in session:
+                session['last_page'] = request.endpoint
+                print("First visit, setting last_page.")
+            elif session.get('last_page') == request.endpoint:
+                print("Page refresh detected. Logging out.")
+                logout_user()
+                session.clear()
+                return redirect(url_for('home'))
+            else:
+                print("Navigating to a new page.")
+                session['last_page'] = request.endpoint
+    else:
+        print("User is not authenticated. No logout.")
+
+
+@app.route("/", methods=["GET"])
+def home():
+    if current_user.is_authenticated:
+        return redirect(url_for("task"))
+    return render_template("home.html")
+
+# This is the route that will handle the main task page after login
+@app.route("/task", methods=["GET", "POST"])
+@login_required  # Protect the page so only logged-in users can access
+def task():
     score = None
     average_score = 0.0
     selected_question = list(answers.keys())[0]
     user_answer = ""
 
+    if "score_history" not in session:
+        session["score_history"] = {}
+        session.modified = True
+
     if request.method == "POST":
         selected_question = request.form["question"]
-        user_answer = request.form["answer"]
+
+        # Fetch the transcribed answer from the most recent video
+        user_answer = session.get("last_transcribed_answer", "")
+        if not user_answer:
+            return render_template("index.html",
+                                   questions=answers.keys(),
+                                   score=score,
+                                   average_score=average_score,
+                                   selected=selected_question,
+                                   user_answer="No transcribed answer found.",
+                                   model_answer=answers.get(selected_question))
 
         expected_answer = answers[selected_question]
         user_vec = get_avg_vector(user_answer)
         expected_vec = get_avg_vector(expected_answer)
 
         score = cosine_similarity([user_vec], [expected_vec])[0][0] * 100
-        score = round(score, 2)
-
-        # Store score per question
-        if "score_history" not in session:
-            session["score_history"] = {}
+        score = float(round(score, 2))
 
         session["score_history"][selected_question] = score
         session.modified = True
@@ -102,6 +175,177 @@ def index():
                            user_answer=user_answer,
                            model_answer=answers.get(selected_question))
 
+def fix_webm_duration(filepath):
+    try:
+        # Verify if the video is already readable
+        clip = mp.VideoFileClip(filepath)
+        clip.close()
+        print("WebM file is valid. No fix needed.")
+        return filepath
+
+    except Exception:
+        print("Error opening video file. Attempting to fix with FFmpeg.")
+
+        fixed_filepath = filepath.replace('.webm', '_fixed.webm')
+        ffmpeg_command = [
+            'ffmpeg', '-y', '-i', filepath,
+            '-c:v', 'libvpx-vp9', '-c:a', 'libopus',  # Recommended codecs for WebM
+            '-fflags', '+genpts', fixed_filepath
+        ]
+
+        try:
+            result = subprocess.run(ffmpeg_command, check=True, capture_output=True, text=True)
+            print("FFmpeg Output:", result.stdout)
+            print("FFmpeg Error:", result.stderr)
+            if os.path.exists(fixed_filepath):
+                return fixed_filepath
+            else:
+                raise Exception("FFmpeg failed to create fixed file.")
+
+        except subprocess.CalledProcessError as e:
+            print(f"FFmpeg command failed: {e}")
+            raise Exception("FFmpeg failed to fix the video.")
+
+
+
+# Upload video route
+@app.route('/upload_video', methods=['POST'])
+@login_required
+def upload_video():
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'Invalid request format. Expected JSON data.'}), 400
+
+        video_data = data.get('video')
+        if not video_data:
+            return jsonify({'error': 'No video data provided.'}), 400
+
+        if not video_data.startswith('data:video'):
+            return jsonify({'error': 'Invalid video format. Ensure it is base64 encoded.'}), 400
+
+        # Decode the base64 data
+        try:
+            video_base64 = video_data.split(",")[1]
+            video_data_bytes = base64.b64decode(video_base64)
+        except (IndexError, base64.binascii.Error) as e:
+            return jsonify({'error': 'Malformed base64 data.'}), 400
+
+        # Save video
+        user_folder = os.path.join('static', 'uploads', current_user.username)
+        os.makedirs(user_folder, exist_ok=True)
+        filename = f'{datetime.now().strftime("%Y%m%d_%H%M%S")}.webm'
+        filepath = os.path.join(user_folder, filename)
+
+        with open(filepath, 'wb') as f:
+            f.write(video_data_bytes)
+
+        # Fix WebM duration if necessary
+        fixed_filepath = fix_webm_duration(filepath)
+
+        # Extract audio from video (if audio exists)
+        video_clip = mp.VideoFileClip(fixed_filepath)
+        if not video_clip.audio:
+            return jsonify({'error': 'No audio track found in the video.'}), 400
+
+        audio_clip = video_clip.audio
+        audio_filepath = fixed_filepath.replace('.webm', '.wav')
+        audio_clip.write_audiofile(audio_filepath)
+
+        # Speech recognition
+        recognizer = sr.Recognizer()
+        with sr.AudioFile(audio_filepath) as source:
+            audio = recognizer.record(source)
+
+        user_answer = recognizer.recognize_google(audio)
+        print(f"Transcribed Text: {user_answer}")
+
+        # Similarity calculation (example question)
+        selected_question = "Tell me about yourself"
+        expected_answer = answers.get(selected_question, "")
+        user_vec = get_avg_vector(user_answer)
+        expected_vec = get_avg_vector(expected_answer)
+
+        score = cosine_similarity([user_vec], [expected_vec])[0][0] * 100
+        score = float(round(score, 2))
+
+        print(f"Calculated Similarity Score: {score}")
+
+        # Save video info to the database
+        video = Video(filename=filename, user_id=current_user.id)
+        db.session.add(video)
+        db.session.commit()
+
+        return jsonify({
+            'message': 'Video uploaded and processed successfully!',
+            'score': score,
+            'filepath': fixed_filepath
+        }), 200
+
+    except sr.UnknownValueError:
+        return jsonify({'error': 'Could not understand the audio.'}), 400
+
+    except sr.RequestError as e:
+        return jsonify({'error': f'Google Speech Recognition error: {e}'}), 500
+
+    except Exception as e:
+        print(f'Error: {str(e)}')
+        return jsonify({'error': f'An error occurred: {str(e)}'}), 500
+    
+
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    if request.method == "POST":
+        username = request.form["username"]
+        password = generate_password_hash(request.form["password"])
+        user = User(username=username, password=password)
+        
+        # Check if username already exists
+        existing_user = User.query.filter_by(username=username).first()
+        if existing_user:
+            flash("Username already exists!", 'danger')
+            return redirect('/register')
+        
+        db.session.add(user)
+        db.session.commit()
+        flash("Account created successfully! You can now login.", 'success')
+        return redirect('/login')  # Redirect to login page after successful registration
+    return render_template('register.html')
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if current_user.is_authenticated:
+        return redirect(url_for('task'))
+
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+        
+        # Check if the user exists in the database
+        user = User.query.filter_by(username=username).first()
+        
+        # If the user exists and password matches
+        if user and check_password_hash(user.password, password):
+            login_user(user)
+            flash("Login Successful!", "success")
+            return redirect(url_for('task'))
+        else:
+            flash('Login Failed. Check your username and/or password', 'danger')
+            # Optional: You could log the failed attempt to the console for debugging
+            print(f"Failed login attempt for username: {username}")
+    
+    return render_template('login.html')
+
+@app.route("/logout")
+@login_required
+def logout():
+    logout_user()
+    return redirect('/login')
+
+@login_manager.user_loader
+def load_user(user_id):
+    return User.query.get(int(user_id))
 
 @app.route("/reset")
 def reset():
@@ -109,5 +353,7 @@ def reset():
     session.modified = True
     return redirect("/")
 
+
 if __name__ == "__main__": 
-    app.run(debug=True)
+    app.run(debug=True) 
+print("Current endpoint:", request.endpoint)
