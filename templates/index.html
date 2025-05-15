@@ -27,26 +27,23 @@
     {% if current_user.is_authenticated %}
         <h2 class="mb-4 text-center text-primary">Interview Answer Evaluator</h2>
 
-        <form method="POST">
+        <form method="POST" id="taskForm">
             <div class="mb-3">
                 <label for="question" class="form-label">Select a Question:</label>
                 <select name="question" id="question" class="form-select">
                     {% for question in questions %}
-                        <option value="{{ question }}" {% if selected == question %}selected{% endif %}>{{ question }}</option>
+                        <option value="{{ question }}">{{ question }}</option>
                     {% endfor %}
                 </select>
             </div>
-
-            <button type="submit" class="btn btn-success">Submit</button>
-            <a href="/reset" class="btn btn-danger ms-2">Reset Session</a>
         </form>
 
         <div class="mt-4 alert alert-info" id="score-section" style="display: none;">
             <strong>Similarity Score:</strong> <span id="similarity-score">0%</span>
         </div>
 
-        <div class="mt-3 alert alert-warning">
-            <strong>Average Score:</strong> {{ average_score }}%
+        <div class="mt-3 alert alert-warning" id="average-section" style="display: none;">
+            <strong>Average Score:</strong> <span id="average-score">0</span>
         </div>
 
         <h4 class="text-center text-primary">Record Your Answer</h4>
@@ -59,15 +56,15 @@
 
         <div id="recording-section" class="text-center" style="display: none;">
             <video id="recorded" controls style="width: 100%; max-height: 300px; margin-top: 10px; border-radius: 10px;"></video>
-            <button class="btn btn-success mt-2" id="uploadBtn" onclick="uploadVideo(event)" disabled>Upload Video</button>
+            <button class="btn btn-success mt-2" id="uploadBtn" onclick="uploadVideo(event)" disabled>Submit</button>
             <input type="hidden" id="videoData">
             <div id="error-message" class="text-danger mt-2" style="display: none;"></div>
         </div>
-        
 
         <div class="mt-4 alert alert-info" id="transcribed-answer" style="display: none;">
             <strong>Transcribed Answer:</strong> <span id="transcribed-text"></span>
         </div>
+
 
     {% else %}
         <h2 class="mb-4 text-center text-primary">Welcome to the Interview Evaluator</h2>
@@ -84,6 +81,5 @@
 </div>
 
 <script src="{{ url_for('static', filename='scripts.js') }}?v={{ config['VERSION'] }}"></script>
-
 </body>
 </html>

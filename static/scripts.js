@@ -83,45 +83,48 @@ function convertBlobToBase64(blob) {
 }
 
 // Upload Function
-function uploadVideo(event) {
-    event.preventDefault();
+async function uploadVideo(event) {
+    event.preventDefault();  // Prevent form submission if button is inside a form
 
-    const videoData = videoDataInput.value.trim();
+    document.getElementById('error-message').style.display = 'none';
+    const videoData = document.getElementById("videoData").value;
 
-    if (!videoData.startsWith('data:video/')) {
-        alert('Invalid video format. Ensure it is a base64 video.');
-        console.error("Video Data is not in Base64 format:", videoData);
+    // Get selected question from dropdown
+    const questionSelect = document.getElementById("question");
+    const selectedQuestion = questionSelect ? questionSelect.value : null;
+
+    if (!selectedQuestion) {
+        document.getElementById('error-message').innerText = "Please select a question before submitting.";
+        document.getElementById('error-message').style.display = 'block';
         return;
     }
 
-    fetch('/upload_video', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ video: videoData })
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.error) {
-            console.error('Server Error:', data.error);
-            alert('Failed to upload video: ' + data.error);
-        } else {
-            console.log('Success:', data);
-            alert('Video uploaded successfully!');
-        }
-    })
-    .catch(error => {
-        console.error('Fetch Error:', error);
-        alert('Failed to upload video. Network error or invalid server response.');
+    const response = await fetch("/upload_video", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ 
+            video: videoData,
+            question_key: selectedQuestion  // send selected question here
+        })
     });
+
+    const data = await response.json();
+    if (data.transcribed_text) {
+        document.getElementById("transcribed-text").innerText = data.transcribed_text;
+        document.getElementById("transcribed-answer").style.display = "block";
+        document.getElementById("score-section").style.display = "block";
+        document.getElementById("average-section").style.display = "block";
+
+        document.getElementById("similarity-score").innerText = data.score + "%";
+        document.getElementById("average-score").innerText = data.average_score + "%";
+    } else if (data.error) {
+        document.getElementById('error-message').innerText = data.error;
+        document.getElementById('error-message').style.display = 'block';
+    }
 }
 
-function displayScore(score, transcribedText) {
-    document.getElementById("score-section").style.display = "block";
-    document.getElementById("similarity-score").textContent = score + "%";
 
-    document.getElementById("transcribed-answer").style.display = "block";
-    document.getElementById("transcribed-text").textContent = transcribedText;
-}
+
 function displayScore(score, transcribedText) {
     document.getElementById("score-section").style.display = "block";
     document.getElementById("similarity-score").textContent = score + "%";

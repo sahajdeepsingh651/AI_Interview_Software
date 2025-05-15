@@ -86,14 +86,21 @@ def before_request():
 
         # Exempt static files, API calls, and favicon
         if request.path.startswith('/static') or request.path.startswith('/api') or request.path == '/favicon.ico':
-            return  # Do nothing, continue normally
+            return  # Continue normally
 
-        # Exclude form submissions (POST requests)
-        if request.method == 'POST':
-            print("POST request detected. Not logging out.")
-            return  # Skip logout on POST requests
+        # Skip logout check if flagged (after POST redirect)
+        if session.get('skip_logout_check'):
+            print("Skipping logout check due to POST redirect.")
+            session.pop('skip_logout_check', None)  # Remove flag after use
+            session['last_page'] = request.endpoint
+            return
+
+        # Exclude POST and AJAX requests from logout
+        if request.method == 'POST' or request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            print("POST or AJAX request detected. Not logging out.")
+            return
         
-        # Only detect refresh on GET requests (not video recording)
+        # Detect refresh only on GET requests
         if request.method == 'GET':
             if request.endpoint is None:
                 print("Request with None endpoint. Ignoring.")
@@ -120,60 +127,67 @@ def home():
         return redirect(url_for("task"))
     return render_template("home.html")
 
-# This is the route that will handle the main task page after login
+
 @app.route("/task", methods=["GET", "POST"])
-@login_required  # Protect the page so only logged-in users can access
+@login_required
 def task():
-    score = None
-    average_score = 0.0
-    selected_question = list(answers.keys())[0]
-    user_answer = ""
-
-    if "score_history" not in session:
-        session["score_history"] = {}
-        session.modified = True
-
     if request.method == "POST":
-        selected_question = request.form["question"]
+        data = request.get_json()
+        selected_question = data.get("question")
+        print("All questions and expected answers:")
+        for q, a in answers.items():
+            print(f"Q: {q} => A: {a}")
 
-        # Fetch the transcribed answer from the most recent video
+
         user_answer = session.get("last_transcribed_answer", "")
         if not user_answer:
-            return render_template("index.html",
-                                   questions=answers.keys(),
-                                   score=score,
-                                   average_score=average_score,
-                                   selected=selected_question,
-                                   user_answer="No transcribed answer found.",
-                                   model_answer=answers.get(selected_question))
+            print("No transcribed answer found in session")
+            return jsonify({
+                "error": "No transcribed answer found.",
+                "score": None,
+                "average_score": None,
+                "transcribed_text": "No answer transcribed yet."
+            })
 
-        expected_answer = answers[selected_question]
+        expected_answer = answers.get(selected_question)
         user_vec = get_avg_vector(user_answer)
         expected_vec = get_avg_vector(expected_answer)
 
-        score = cosine_similarity([user_vec], [expected_vec])[0][0] * 100
-        score = float(round(score, 2))
+        score = round(float(cosine_similarity([user_vec], [expected_vec])[0][0] * 100), 2)
 
-        session["score_history"][selected_question] = score
+        if "score_history" not in session:
+            session["score_history"] = {}
+
+        # Initialize list for question if doesn't exist
+        if selected_question not in session["score_history"]:
+            session["score_history"][selected_question] = []
+
+        # Append new score for the selected question
+        session["score_history"][selected_question].append(score)
         session.modified = True
 
-        # Average of most recent scores per unique question
-        score_values = list(session["score_history"].values())
-        if score_values:
-            average_score = round(sum(score_values) / len(score_values), 2)
+        # Debug output
+        print("Score History in session:", session["score_history"])
 
-    elif "score_history" in session:
-        score_values = list(session["score_history"].values())
-        if score_values:
-            average_score = round(sum(score_values) / len(score_values), 2)
+        # Flatten all scores into a single list to calculate average
+        all_scores = [s for scores in session["score_history"].values() for s in scores]
 
+        print("All scores flattened:", all_scores)
+
+        average_score = round(sum(all_scores) / len(all_scores), 2) if all_scores else 0.0
+        print(f"Calculated average score: {average_score}")
+
+        return jsonify({
+            "transcribed_text": user_answer,
+            "score": score,
+            "average_score": average_score
+        })
     return render_template("index.html",
                            questions=answers.keys(),
-                           score=score,
-                           average_score=average_score,
-                           selected=selected_question,
-                           user_answer=user_answer,
-                           model_answer=answers.get(selected_question))
+                           score=None,
+                           average_score=0.0,
+                           user_answer="")
+
 
 def fix_webm_duration(filepath):
     try:
@@ -207,9 +221,8 @@ def fix_webm_duration(filepath):
             raise Exception("FFmpeg failed to fix the video.")
 
 
-# Upload video route
-@app.route('/upload_video', methods=['POST'])
 @login_required
+@app.route('/upload_video', methods=['POST'])
 def upload_video():
     try:
         data = request.get_json()
@@ -217,20 +230,24 @@ def upload_video():
             return jsonify({'error': 'Invalid request format. Expected JSON data.'}), 400
 
         video_data = data.get('video')
+        question_key = data.get('question_key')  # Expect frontend to send question identifier
+        
         if not video_data:
             return jsonify({'error': 'No video data provided.'}), 400
-
+        
         if not video_data.startswith('data:video'):
             return jsonify({'error': 'Invalid video format. Ensure it is base64 encoded.'}), 400
+        print(f"Received question_key: {question_key}")
+        print(f"Available questions in answers: {list(answers.keys())}")
+        
+        if not question_key or question_key not in answers:
+            return jsonify({'error': 'Invalid or missing question identifier.'}), 400
 
-        # Decode the base64 data
-        try:
-            video_base64 = video_data.split(",")[1]
-            video_data_bytes = base64.b64decode(video_base64)
-        except (IndexError, base64.binascii.Error) as e:
-            return jsonify({'error': 'Malformed base64 data.'}), 400
+        # Decode base64 video
+        video_base64 = video_data.split(",")[1]
+        video_data_bytes = base64.b64decode(video_base64)
 
-        # Save video
+        # Save video file
         user_folder = os.path.join('static', 'uploads', current_user.username)
         os.makedirs(user_folder, exist_ok=True)
         filename = f'{datetime.now().strftime("%Y%m%d_%H%M%S")}.webm'
@@ -239,19 +256,14 @@ def upload_video():
         with open(filepath, 'wb') as f:
             f.write(video_data_bytes)
 
-        # Fix WebM duration if necessary
+        # Fix WebM duration if necessary (assume this function is defined)
         fixed_filepath = fix_webm_duration(filepath)
 
-        # Extract audio from video (if audio exists)
+        # Extract audio and transcribe
         video_clip = mp.VideoFileClip(fixed_filepath)
-        if not video_clip.audio:
-            return jsonify({'error': 'No audio track found in the video.'}), 400
-
-        audio_clip = video_clip.audio
         audio_filepath = fixed_filepath.replace('.webm', '.wav')
-        audio_clip.write_audiofile(audio_filepath)
+        video_clip.audio.write_audiofile(audio_filepath)
 
-        # Speech recognition
         recognizer = sr.Recognizer()
         with sr.AudioFile(audio_filepath) as source:
             audio = recognizer.record(source)
@@ -259,19 +271,34 @@ def upload_video():
         user_answer = recognizer.recognize_google(audio)
         print(f"Transcribed Text: {user_answer}")
 
-        # Store transcribed answer in session
+        # Save transcribed answer in session
         session['last_transcribed_answer'] = user_answer
         session.modified = True
 
-        # Save video info to the database
-        video = Video(filename=filename, user_id=current_user.id)
-        db.session.add(video)
-        db.session.commit()
+        # Calculate score
+        expected_answer = answers[question_key]
+        user_vec = get_avg_vector(user_answer)
+        expected_vec = get_avg_vector(expected_answer)
+
+        score = cosine_similarity([user_vec], [expected_vec])[0][0] * 100
+        score = round(float(score), 2)
+        print(f"Calculated Score: {score}")
+
+        # Store score in session history
+        if "score_history" not in session:
+            session["score_history"] = {}
+        session["score_history"][question_key] = score
+        session.modified = True
+
+        # Calculate average score
+        score_values = list(session["score_history"].values())
+        average_score = round(sum(score_values) / len(score_values), 2) if score_values else 0.0
 
         return jsonify({
             'message': 'Video uploaded and processed successfully!',
-            'transcribed_text': user_answer,
-            'filepath': fixed_filepath
+            'score': score,
+            'average_score': average_score,
+            'transcribed_text': user_answer
         }), 200
 
     except sr.UnknownValueError:
