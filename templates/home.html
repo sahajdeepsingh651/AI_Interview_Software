@@ -2,15 +2,21 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Welcome</title>
+    <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body>
-    <h1>Welcome to the Interview App</h1>
-    <a href="{{ url_for('login') }}">
-        <button>Login</button>
-    </a>
-    <a href="{{ url_for('register') }}">
-        <button>Register</button>
-    </a>
+<body class="flex items-center justify-center min-h-screen bg-gradient-to-r from-purple-500 to-pink-600">
+    <div class="bg-white p-8 rounded-2xl shadow-lg text-center max-w-md w-full">
+        <h1 class="text-3xl font-bold text-gray-800 mb-6">Welcome to the Interview App</h1>
+        <div class="space-x-4">
+            <a href="{{ url_for('login') }}">
+                <button class="bg-blue-600 text-white py-2 px-6 rounded-lg hover:bg-blue-700 transition duration-300">Login</button>
+            </a>
+            <a href="{{ url_for('register') }}">
+                <button class="bg-green-600 text-white py-2 px-6 rounded-lg hover:bg-green-700 transition duration-300">Register</button>
+            </a>
+        </div>
+    </div>
 </body>
 </html>
