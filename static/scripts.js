@@ -65,8 +65,8 @@ function handleRecordingStop() {
     recordingSection.style.display = "block";
 
     convertBlobToBase64(blob).then(base64Video => {
-        videoDataInput.value = base64Video;
-        uploadBtn.disabled = false;
+        videoDataInput.value = base64Video;  // This sets the hidden input's value to the base64 video data
+        uploadBtn.disabled = false; // Enable the upload button
     }).catch(error => {
         console.error("Failed to convert Blob to Base64:", error);
     });
@@ -113,4 +113,19 @@ function uploadVideo(event) {
         console.error('Fetch Error:', error);
         alert('Failed to upload video. Network error or invalid server response.');
     });
+}
+
+function displayScore(score, transcribedText) {
+    document.getElementById("score-section").style.display = "block";
+    document.getElementById("similarity-score").textContent = score + "%";
+
+    document.getElementById("transcribed-answer").style.display = "block";
+    document.getElementById("transcribed-text").textContent = transcribedText;
+}
+function displayScore(score, transcribedText) {
+    document.getElementById("score-section").style.display = "block";
+    document.getElementById("similarity-score").textContent = score + "%";
+
+    document.getElementById("transcribed-answer").style.display = "block";
+    document.getElementById("transcribed-text").textContent = transcribedText;
 }

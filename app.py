@@ -207,7 +207,6 @@ def fix_webm_duration(filepath):
             raise Exception("FFmpeg failed to fix the video.")
 
 
-
 # Upload video route
 @app.route('/upload_video', methods=['POST'])
 @login_required
@@ -260,16 +259,9 @@ def upload_video():
         user_answer = recognizer.recognize_google(audio)
         print(f"Transcribed Text: {user_answer}")
 
-        # Similarity calculation (example question)
-        selected_question = "Tell me about yourself"
-        expected_answer = answers.get(selected_question, "")
-        user_vec = get_avg_vector(user_answer)
-        expected_vec = get_avg_vector(expected_answer)
-
-        score = cosine_similarity([user_vec], [expected_vec])[0][0] * 100
-        score = float(round(score, 2))
-
-        print(f"Calculated Similarity Score: {score}")
+        # Store transcribed answer in session
+        session['last_transcribed_answer'] = user_answer
+        session.modified = True
 
         # Save video info to the database
         video = Video(filename=filename, user_id=current_user.id)
@@ -278,7 +270,7 @@ def upload_video():
 
         return jsonify({
             'message': 'Video uploaded and processed successfully!',
-            'score': score,
+            'transcribed_text': user_answer,
             'filepath': fixed_filepath
         }), 200
 
@@ -291,7 +283,6 @@ def upload_video():
     except Exception as e:
         print(f'Error: {str(e)}')
         return jsonify({'error': f'An error occurred: {str(e)}'}), 500
-    
 
 @app.route('/register', methods=['GET', 'POST'])
 def register():

@@ -59,9 +59,11 @@
 
         <div id="recording-section" class="text-center" style="display: none;">
             <video id="recorded" controls style="width: 100%; max-height: 300px; margin-top: 10px; border-radius: 10px;"></video>
-            <button class="btn btn-success mt-2" id="uploadBtn" onclick="uploadVideo()">Upload Video</button>
+            <button class="btn btn-success mt-2" id="uploadBtn" onclick="uploadVideo(event)" disabled>Upload Video</button>
+            <input type="hidden" id="videoData">
             <div id="error-message" class="text-danger mt-2" style="display: none;"></div>
         </div>
+        
 
         <div class="mt-4 alert alert-info" id="transcribed-answer" style="display: none;">
             <strong>Transcribed Answer:</strong> <span id="transcribed-text"></span>
@@ -82,16 +84,6 @@
 </div>
 
 <script src="{{ url_for('static', filename='scripts.js') }}?v={{ config['VERSION'] }}"></script>
-<script>
-// Function to dynamically update the score
-function displayScore(score, transcribedText) {
-    document.getElementById("score-section").style.display = "block";
-    document.getElementById("similarity-score").textContent = score + "%";
-
-    document.getElementById("transcribed-answer").style.display = "block";
-    document.getElementById("transcribed-text").textContent = transcribedText;
-}
-</script>
 
 </body>
 </html>
