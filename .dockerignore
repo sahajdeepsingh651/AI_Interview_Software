@@ -1,0 +1,12 @@
+word2vec_model.bin
+__pycache__/
+*.pyc
+venv/
+.env
+static/uploads/
+migrations/
+instance/site.db
+.git
+.gitignore
+Dockerfile
+*.log
