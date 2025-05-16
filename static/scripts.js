@@ -81,15 +81,12 @@ function convertBlobToBase64(blob) {
         reader.readAsDataURL(blob);
     });
 }
-
 // Upload Function
 async function uploadVideo(event) {
-    event.preventDefault();  // Prevent form submission if button is inside a form
+    event.preventDefault();
 
     document.getElementById('error-message').style.display = 'none';
     const videoData = document.getElementById("videoData").value;
-
-    // Get selected question from dropdown
     const questionSelect = document.getElementById("question");
     const selectedQuestion = questionSelect ? questionSelect.value : null;
 
@@ -99,27 +96,64 @@ async function uploadVideo(event) {
         return;
     }
 
-    const response = await fetch("/upload_video", {
-        method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({ 
-            video: videoData,
-            question_key: selectedQuestion  // send selected question here
-        })
-    });
+    // Show loading animation
+    document.getElementById("uploadBtn").innerText = "Submitting...";
+    document.getElementById("uploadBtn").disabled = true;
 
-    const data = await response.json();
-    if (data.transcribed_text) {
-        document.getElementById("transcribed-text").innerText = data.transcribed_text;
-        document.getElementById("transcribed-answer").style.display = "block";
-        document.getElementById("score-section").style.display = "block";
-        document.getElementById("average-section").style.display = "block";
+    try {
+        const response = await fetch("/upload_video", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({ 
+                video: videoData,
+                question_key: selectedQuestion
+            })
+        });
 
-        document.getElementById("similarity-score").innerText = data.score + "%";
-        document.getElementById("average-score").innerText = data.average_score + "%";
-    } else if (data.error) {
-        document.getElementById('error-message').innerText = data.error;
+        const data = await response.json();
+        if (data.score) {
+            document.getElementById("similarity-score").innerText = data.score + "%";
+            document.getElementById("average-score").innerText = data.average_score + "%";
+            document.getElementById("score-section").style.display = "block";
+            document.getElementById("average-section").style.display = "block";
+
+            // Show the Submit Test button after video submission
+            document.getElementById("submitTestBtn").style.display = "inline-block";
+        } else if (data.error) {
+            document.getElementById('error-message').innerText = data.error;
+            document.getElementById('error-message').style.display = 'block';
+        }
+    } catch (error) {
+        document.getElementById('error-message').innerText = "Error uploading video.";
         document.getElementById('error-message').style.display = 'block';
+    } finally {
+        document.getElementById("uploadBtn").innerText = "Submit";
+        document.getElementById("uploadBtn").disabled = false;
+    }
+}
+
+// Submit Test Function
+async function submitTest() {
+    const averageScore = document.getElementById("average-score").innerText.replace('%', '');
+
+    try {
+        const response = await fetch("/submit_test", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({ 
+                average_score: parseFloat(averageScore)
+            })
+        });
+
+        const data = await response.json();
+        if (data.message) {
+            alert(data.message);
+            document.getElementById("submitTestBtn").disabled = true;
+        } else if (data.error) {
+            alert("Error: " + data.error);
+        }
+    } catch (error) {
+        alert("An error occurred while submitting the test.");
     }
 }
 
@@ -132,3 +166,5 @@ function displayScore(score, transcribedText) {
     document.getElementById("transcribed-answer").style.display = "block";
     document.getElementById("transcribed-text").textContent = transcribedText;
 }
+
+

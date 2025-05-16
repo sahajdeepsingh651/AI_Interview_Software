@@ -4,7 +4,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 import base64
 from random import random
-from models import db, User, Video
+from models import db, User, Video,TestResult
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 import os
@@ -13,7 +13,7 @@ import moviepy.editor as mp
 import speech_recognition as sr
 from moviepy.editor import VideoFileClip
 import subprocess
-
+from flask_migrate import Migrate
 
 app = Flask(__name__)
 app.secret_key = 'your_secret_key_here'
@@ -24,6 +24,7 @@ print("Model loaded.")
 
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///site.db'
 db.init_app(app)
+migrate = Migrate(app, db)
 
 login_manager = LoginManager()
 login_manager.init_app(app)
@@ -76,6 +77,10 @@ answers = {
 def get_avg_vector(text):
     embedding = model.encode(text)
     return np.array(embedding)
+
+@app.before_request
+def log_current_endpoint():
+    print("Current endpoint:", request.endpoint)
 
 @app.before_request
 def before_request():
@@ -371,7 +376,29 @@ def reset():
     session.modified = True
     return redirect("/")
 
+@app.route('/submit_test', methods=['POST'])
+@login_required
+def submit_test():
+    try:
+        if "score_history" not in session or not session["score_history"]:
+            return jsonify({'error': 'No scores available for submission.'}), 400
+
+        average_score = sum(session["score_history"].values()) / len(session["score_history"])
+        average_score = round(average_score, 2)
+        
+        student_name = current_user.username  # Fetch student's name
+
+        # Save test result with student name and score
+        new_result = TestResult(student_name=student_name, score=average_score, user_id=current_user.id)
+        db.session.add(new_result)
+        db.session.commit()
+
+        return jsonify({'message': 'Test submitted successfully!', 'average_score': average_score}), 200
+
+    except Exception as e:
+        print(f"Error in submit_test: {str(e)}")
+        return jsonify({'error': f'An error occurred while submitting the test: {str(e)}'}), 500
+
 
 if __name__ == "__main__": 
     app.run(debug=True) 
-print("Current endpoint:", request.endpoint)

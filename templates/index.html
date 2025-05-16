@@ -40,13 +40,26 @@
             max-height: 280px;
             width: 100%;
         }
+        /* Spinner styles */
+    .spinner-border {
+    width: 1.5rem;
+    height: 1.5rem;
+    border-width: 0.2em;
+    vertical-align: text-bottom;
+    margin-left: 8px;
+    display: none; /* hidden by default */
+}
+
     </style>
 </head>
 <body>
 <div class="container">
+
     {% if current_user.is_authenticated %}
         <h2 class="mb-4 text-center text-primary">Interview Answer Evaluator</h2>
-
+        <div class="text-end mb-3">
+            <button id="submitTestBtn" class="btn btn-danger" onclick="submitTest()" style="display: none;">Submit Test</button>
+        </div>
         <form method="POST" id="taskForm">
             <div class="mb-3">
                 <label for="question" class="form-label">Select a Question:</label>
@@ -72,18 +85,26 @@
             <br>
             <button id="startBtn" class="btn btn-primary mt-2" onclick="startRecording()">Start Recording</button>
             <button id="stopBtn" class="btn btn-warning mt-2" onclick="stopRecording()" disabled>Stop Recording</button>
+
         </div>
 
         <div id="recording-section" class="text-center" style="display: none;">
             <video id="recorded" controls style="width: 100%; max-height: 300px; margin-top: 10px; border-radius: 10px;"></video>
-            <button class="btn btn-success mt-2" id="uploadBtn" onclick="uploadVideo(event)" disabled>Submit</button>
+            <button class="btn btn-success mt-2" id="uploadBtn" onclick="uploadVideo(event)" disabled>
+                Submit
+                <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true" id="loadingSpinner"></span>
+            </button>
+            
             <input type="hidden" id="videoData">
             <div id="error-message" class="text-danger mt-2" style="display: none;"></div>
         </div>
 
-        <div class="mt-4 alert alert-info" id="transcribed-answer" style="display: none;">
-            <strong>Transcribed Answer:</strong> <span id="transcribed-text"></span>
-        </div>
+<!--
+<div class="mt-4" id="transcribed-answer" style="display: none;">
+    <strong>Transcribed Answer:</strong> <span id="transcribed-text"></span>
+</div>
+-->
+
 
 
     {% else %}
