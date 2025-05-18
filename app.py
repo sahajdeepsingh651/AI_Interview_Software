@@ -1,25 +1,37 @@
 from flask import Flask, render_template, request,session ,redirect,jsonify,flash,url_for
-from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 import base64
-from random import random
-from models import db, User, Video,TestResult
+from models import db, User, TestResult
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 import os
 from datetime import datetime  # Ensure you import datetime here
 import moviepy.editor as mp
 import speech_recognition as sr
-from moviepy.editor import VideoFileClip
 import subprocess
 from flask_migrate import Migrate
+
+import onnxruntime as rt
+from transformers import AutoTokenizer
 
 app = Flask(__name__)
 app.secret_key = 'your_secret_key_here'
 # Load Word2Vec model
-print("Loading Word2Vec model...")
-model = SentenceTransformer('all-MiniLM-L6-v2')
+# Load tokenizer
+tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
+
+onnx_model_path = os.path.join("onnx_model", "model.onnx")
+try:
+    onnx_session = rt.InferenceSession(onnx_model_path)
+    print("ONNX model loaded successfully.")
+except Exception as e:
+    print(f"Error loading ONNX model: {e}")
+    onnx_session = None
+
+
+print("Loading  model...")
+
 print("Model loaded.")
 
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///site.db'
@@ -46,7 +58,7 @@ answers = {
 
     "Difference between confidence and overconfidence": "Confidence is the self-assurance that comes from preparation, knowledge, and experience. It allows you to face challenges calmly and competently. Overconfidence, on the other hand, is when someone overestimates their abilities and underestimates the difficulty of a task, often leading to mistakes. While confidence is grounded in reality, overconfidence can lead to careless decisions and poor planning.",
 
-    "Difference between hard work and smart work": "Hard work involves consistent effort and dedication over time, such as working long hours and taking on tasks with full commitment. Smart work, however, is about using strategies, tools, and planning to achieve results more efficiently. Smart workers prioritize tasks, find creative solutions, and optimize processes without compromising on quality, often achieving more in less time.",
+    "Difference between hard work and  smart work": "Hard work involves consistent effort and dedication over time, such as working long hours and taking on tasks with full commitment. Smart work, however, is about using strategies, tools, and planning to achieve results more efficiently. Smart workers prioritize tasks, find creative solutions, and optimize processes without compromising on quality, often achieving more in less time.",
 
     "How do you feel about working at night and weekends?": "I understand that certain roles require flexibility in working hours, especially when deadlines are tight or when clients are in different time zones. I’m fully open to working night shifts or weekends if it’s necessary for the success of the project or organization. I believe commitment and adaptability are key to succeeding in any professional environment.",
 
@@ -73,10 +85,66 @@ answers = {
     "Who has inspired you in your life?": "My father has been a big inspiration. His discipline, perseverance, and attitude toward problem-solving have taught me how to stay focused and overcome obstacles without giving up."
     
 }
-# Function to get the average vector of a text (for cosine similarity)
-def get_avg_vector(text):
-    embedding = model.encode(text)
-    return np.array(embedding)
+def get_embeddings(sentences):
+    if onnx_session is None:
+        raise ValueError("ONNX model is not loaded.")
+
+    if isinstance(sentences, str):
+        sentences = [sentences]
+
+    try:
+        # Tokenize input sentences with numpy output
+        encoded_input = tokenizer(
+            sentences,
+            padding=True,
+            truncation=True,
+            return_tensors="np"
+        )
+        
+        inputs = {
+            "input_ids": encoded_input["input_ids"].astype(np.int64),
+            "attention_mask": encoded_input["attention_mask"].astype(np.int64),
+        }
+
+        # Include token_type_ids if model requires them
+        if "token_type_ids" in encoded_input:
+            inputs["token_type_ids"] = encoded_input["token_type_ids"].astype(np.int64)
+
+        # Run ONNX model to get output embeddings
+        outputs = onnx_session.run(None, inputs)
+        embeddings = outputs[0]  # Typically shape (batch_size, seq_len, embed_dim)
+
+        print(f"Output embeddings shape: {embeddings.shape}")
+
+        # If output is token embeddings, do mean pooling using attention mask
+        if embeddings.ndim == 3:
+            attention_mask = encoded_input["attention_mask"].astype(np.float32)
+            mask_expanded = np.expand_dims(attention_mask, axis=-1)  # (batch, seq_len, 1)
+
+            summed = np.sum(embeddings * mask_expanded, axis=1)
+            counts = np.clip(np.sum(mask_expanded, axis=1), a_min=1e-9, a_max=None)  # avoid div by 0
+
+            sentence_embeddings = summed / counts  # (batch_size, embed_dim)
+        elif embeddings.ndim == 2:
+            sentence_embeddings = embeddings  # Already sentence-level
+        else:
+            raise ValueError(f"Unexpected embeddings shape: {embeddings.shape}")
+
+        # Ensure embeddings are always 2D
+        if sentence_embeddings.ndim == 1:
+            sentence_embeddings = sentence_embeddings.reshape(1, -1)  # (1, embed_dim)
+
+        print(f"Final sentence embeddings shape: {sentence_embeddings.shape}")
+
+        # If single sentence, return just one embedding vector
+        if len(sentence_embeddings) == 1:
+            return sentence_embeddings[0].reshape(1, -1)
+        
+        return sentence_embeddings
+
+    except Exception as e:
+        print(f"Error in generating embeddings: {e}")
+        return None
 
 @app.before_request
 def log_current_endpoint():
@@ -155,10 +223,13 @@ def task():
             })
 
         expected_answer = answers.get(selected_question)
-        user_vec = get_avg_vector(user_answer)
-        expected_vec = get_avg_vector(expected_answer)
-
-        score = round(float(cosine_similarity([user_vec], [expected_vec])[0][0] * 100), 2)
+        user_vec = get_embeddings(user_answer)
+        expected_vec = get_embeddings(expected_answer)
+        fscore = cosine_similarity(user_vec, expected_vec)[0][0] * 100
+        if user_vec is None or expected_vec is None:
+            return jsonify({'error': 'Failed to generate embeddings.'}), 500
+        
+        score = round(float(fscore), 2)
 
         if "score_history" not in session:
             session["score_history"] = {}
@@ -226,8 +297,8 @@ def fix_webm_duration(filepath):
             raise Exception("FFmpeg failed to fix the video.")
 
 
-@login_required
 @app.route('/upload_video', methods=['POST'])
+@login_required
 def upload_video():
     try:
         data = request.get_json()
@@ -282,11 +353,12 @@ def upload_video():
 
         # Calculate score
         expected_answer = answers[question_key]
-        user_vec = get_avg_vector(user_answer)
-        expected_vec = get_avg_vector(expected_answer)
+        user_vec = get_embeddings(user_answer)
+        expected_vec = get_embeddings(expected_answer)
 
-        score = cosine_similarity([user_vec], [expected_vec])[0][0] * 100
-        score = round(float(score), 2)
+        fscore = cosine_similarity(user_vec, expected_vec)[0][0] * 100
+
+        score = round(float(fscore), 2)
         print(f"Calculated Score: {score}")
 
         # Store score in session history
