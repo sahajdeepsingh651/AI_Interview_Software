@@ -4,7 +4,7 @@ FROM python:3.10-slim AS builder
 WORKDIR /app
 
 RUN apt-get update && \
-    apt-get install -y gcc libpq-dev ffmpeg && \
+    apt-get install -y --no-install-recommends gcc libpq-dev ffmpeg && \
     rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
@@ -16,21 +16,19 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
-# Install runtime dependencies (ffmpeg, libpq) - needed for your app runtime
 RUN apt-get update && \
-    apt-get install -y libpq5 ffmpeg && \
+    apt-get install -y --no-install-recommends libpq5 ffmpeg && \
     rm -rf /var/lib/apt/lists/*
 
-# Copy python packages from builder stage
 COPY --from=builder /usr/local/lib/python3.10/site-packages /usr/local/lib/python3.10/site-packages
-COPY --from=builder /usr/local/bin /usr/local/bin
 
-# Copy app source code
 COPY . .
 
 ENV FLASK_ENV=production
 ENV PYTHONUNBUFFERED=1
 
-EXPOSE 8000
+# Expose port 8080 (Cloud Run default)
+EXPOSE 8080
 
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "app:app"]
+# Use shell form CMD to expand $PORT environment variable
+CMD ["sh", "-c", "gunicorn --bind 0.0.0.0:$PORT app:app"]
